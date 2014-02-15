@@ -1,11 +1,8 @@
 package edea
 
 import (
-	"bytes"
 	oauth "github.com/araddon/goauth"
 	"github.com/araddon/httpstream"
-	"github.com/cznic/kv"
-	"encoding/json"
 	"log"
 	"os"
 )
@@ -15,53 +12,19 @@ type Configuration struct {
 }
 
 type Application struct {
-	stream chan []byte
-	// expire chan []byte
-	done chan bool
-
-	tweetDB *kv.DB
-	flagDB	*kv.DB
-
 	oc	*oauth.OAuthConsumer
 	at	*oauth.AccessToken
 
 	server	*Server
+	curator	*Curator
 }
 
 
 func (a *Application) Run(){
-	go awaitQuitKey(a.done)
 	log.Print("Edea application started.")
+	a.curator.Run()
 	a.server.Run()
-
-loop:
-	for {
-		select {
-		case b := <-a.stream:
-			switch {
-			case bytes.HasPrefix(b, []byte(`{"created_at":`)):
-				tweet := httpstream.Tweet{}
-				err := json.Unmarshal(b, &tweet)
-
-				if err != nil {
-					break
-				}
-
-				log.Printf("%#v", tweet)
-				a.tweetDB.Set([]byte(tweet.Id_str), b)
-
-				// check filter
-				// push into database
-			}
-
-		case <-a.done:
-			log.Print("Client lost connnection.")
-			break loop
-		}
-	}
-
-	a.tweetDB.Close()
-	a.flagDB.Close()
+	awaitQuitKey(a.curator.done) // blocks
 	log.Print("Edea application exited gracefully.")
 }
 
@@ -70,24 +33,15 @@ func awaitQuitKey(done chan bool) {
 	for {
 		_, err := os.Stdin.Read(buf[:])
 		if err != nil || buf[0] == 'q' {
-			done <- true
+			return
 		}
 	}
 }
 
 func NewApplication(c *Configuration) *Application {
-	a := &Application{
-		stream: make(chan []byte, 1000),
-		done: make(chan bool),
-	}
-
-	tweetDB, _ := kv.CreateTemp(".", "tweet_", ".db", &kv.Options{})
-	flagDB, _ := kv.CreateTemp(".", "flag_", ".db", &kv.Options{})
-
-	a.tweetDB = tweetDB
-	a.flagDB = flagDB
-
-	a.server = NewServer(tweetDB, flagDB)
+	a := &Application{}
+	a.curator = NewCurator()
+	a.server = NewServer(a.curator)
 
 	a.oc = &oauth.OAuthConsumer{
 		Service:          "twitter",
@@ -112,13 +66,13 @@ func NewApplication(c *Configuration) *Application {
 	}
 
 	client := httpstream.NewOAuthClient(a.at, httpstream.OnlyTweetsFilter(func(line []byte) {
-		a.stream <- line
+		a.curator.stream <- line
 	}))
 
 	client.SetMaxWait(5)
 
 	// client.Sample(a.done)
-	client.User(a.done)
+	client.User(a.curator.done)
 
 	return a
 }

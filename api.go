@@ -2,22 +2,19 @@ package edea
 
 import (
 	"github.com/hoisie/web"
-	"github.com/cznic/kv"
 	"log"
 )
 
 type Server struct {
 	server *web.Server
-	tweetDB *kv.DB
-	flagDB *kv.DB
+	curator *Curator
 }
 
-func NewServer(tweetDB *kv.DB, flagDB *kv.DB) *Server {
+func NewServer(c *Curator) *Server {
 	w := web.NewServer()
 	s := &Server{
 		server: w,
-		tweetDB: tweetDB,
-		flagDB: flagDB,
+		curator: c,
 	}
 
 	w.Get("/next", s.getTweet)
@@ -31,8 +28,7 @@ func (s *Server) Run () {
 }
 
 func (s *Server) getTweet (ctx *web.Context) []byte {
-	key, value, _ := s.tweetDB.First()
-	s.tweetDB.Delete(key)
+	tweet_bytes := s.curator.GetNext()
 
-	return value
+	return tweet_bytes
 }
